@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/main.dir/connection.cpp.o -o main   -L/usr/local/lib  -Wl,-rpath,/usr/local/lib -lssh 
