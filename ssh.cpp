@@ -1,79 +1,88 @@
 #include <iostream>
 #include <fstream>
-#include <queue>
 #include <thread>
-#include <mutex>
-#include <condition_variable>
-#include <unistd.h>
+#include <conio.h>
+// Include different headers based on the operating system
+#if defined(_WIN32) || defined(_WIN64)
+#include <windows.h> // Windows-specific headers for system calls
+#else
+#include <unistd.h> // POSIX-specific headers for Unix/Linux
+#endif
+#include "synQueue.h"
 
-class FileWriter {
-    const std::string filename = "output.csv";
-    std::ofstream csvFile;
-    std::queue<std::string> buffer;
-    std::mutex mtx;
-    std::condition_variable cv;
-    bool writingInProgress = false;
-public:
-    FileWriter() {
-        csvFile.open(filename , std::ios::app);
+bool started = false;
+
+void hit()
+{
+
+    while (!started)
+    {
+
+        _kbhit();
     }
-    ~FileWriter() {
-        if (csvFile.is_open()) {
-            csvFile.close();
+}
+int startListening(syncQueue * bufferContainer)
+{
+
+    FILE *pipe;
+    std::thread hitter(hit);
+    
+    try
+    {
+    START:
+#if defined(_WIN32) || defined(_WIN64)
+        const char *command = "plink -batch rt2.olsendata.com -P 22121 -l damadaro -pw clearsky2715";
+        pipe = _popen(command, "r");
+#else
+        const char *command = "sshpass -p 'clearsky2715' ssh -o HostKeyAlgorithms=+ssh-rsa -p 22121 damadaro@rt2.olsendata.com";
+        pipe = popen(command, "r");
+#endif
+
+        if (!pipe)
+        {
+            std::cerr << "Error executing command" << std::endl;
+            goto START;
         }
-    }
-    void write() {
-        while (true) {
-            std::unique_lock<std::mutex> lock(mtx);
-            cv.wait(lock, [this]() { return !buffer.empty() || !writingInProgress; });
 
-            while (!buffer.empty()) {
-                csvFile << buffer.front();
-                buffer.pop();
-                csvFile.close();
-                csvFile.open(filename , std::ios::app);
+#if defined(_WIN32) || defined(_WIN64)
+        if (pipe)
+        {
 
+            fprintf(pipe, "\n");
+        }
+#endif
+
+        char buffer[128];
+        while (pipe && !feof(pipe))
+        {
+            if (fgets(buffer, 128, pipe) != nullptr)
+            {
+                if (strlen(buffer) != 0)
+                {
+                    // std::cout << "Output: " << buffer;
+                    bufferContainer->push(buffer);
+                    
+                    started = 1;
+                }
             }
-
-            writingInProgress = false;
-            lock.unlock();
-            cv.notify_all();
-            std::cout << "\nUpdated file\n";
-            sleep(5);
         }
+
+        std::cout << "Ended ...\n";
+        started = 1;
+        
+    }
+    catch (const std::exception &e)
+    {
     }
 
-    void add(const std::string& line) {
-        std::unique_lock<std::mutex> lock(mtx);
-        buffer.push(line);
-        writingInProgress = true;
-        lock.unlock();
-        cv.notify_all();
-    }
-};
+    hitter.join();
 
-int main() {
-    const char* command = "sshpass -p 'clearsky2715' ssh -o HostKeyAlgorithms=+ssh-rsa -p 22121 damadaro@rt2.olsendata.com";
-
-    FILE* pipe = popen(command, "r");
-    if (!pipe) {
-        std::cerr << "Error executing command" << std::endl;
-        return 1;
-    }
-
-    FileWriter fileWriter;
-    std::thread writerThread(&FileWriter::write, &fileWriter);
-
-    char buffer[128];
-    while (!feof(pipe)) {
-        if (fgets(buffer, 128, pipe) != nullptr) {
-            std::cout << "Output: " << buffer << std::endl;
-            fileWriter.add(buffer);
-        }
-    }
-
+    #if defined(_WIN32) || defined(_WIN64)
+    _pclose(pipe);
+    #else
     pclose(pipe);
+    #endif
+    std::cout << "closed threads\n";
 
-    writerThread.join();
     return 0;
 }
